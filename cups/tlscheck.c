@@ -2,7 +2,7 @@
  * TLS check program for CUPS.
  *
  * Copyright © 2021 by OpenPrinting.
- * Copyright © 2007-2017 by Apple Inc.
+ * Copyright © 2007-2021 by Apple Inc.
  * Copyright © 1997-2006 by Easy Software Products.
  *
  * Licensed under Apache License v2.0.  See the file "LICENSE" for more
@@ -183,7 +183,7 @@ main(int  argc,				/* I - Number of command-line arguments */
     httpFreeCredentials(creds);
   }
 
-#ifdef __APPLE__
+#ifdef HAVE_CDSASSL
   SSLProtocol protocol;
   SSLCipherSuite cipher;
   char unknownCipherName[256];
@@ -713,7 +713,7 @@ main(int  argc,				/* I - Number of command-line arguments */
   }
 
   dhBits = (int)paramsLen * 8;
-#endif /* __APPLE__ */
+#endif /* HAVE_CDSASSL */
 
   if (dhBits > 0)
     printf("%s: OK (TLS: %d.%d, %s, %d DH bits)\n", server, tlsVersion / 10, tlsVersion % 10, cipherName, dhBits);

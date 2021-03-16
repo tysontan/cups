@@ -2,17 +2,17 @@ dnl
 dnl TLS stuff for CUPS.
 dnl
 dnl Copyright © 2021 by OpenPrinting.
-dnl Copyright © 2007-2019 by Apple Inc.
+dnl Copyright © 2007-2021 by Apple Inc.
 dnl Copyright © 1997-2007 by Easy Software Products, all rights reserved.
 dnl
 dnl Licensed under Apache License v2.0.  See the file "LICENSE" for more
 dnl information.
 dnl
 
-AC_ARG_WITH([tls], AS_HELP_STRING([--with-tls=...], [use cdsa (macOS) or gnutls for TLS support]))
+AC_ARG_WITH([tls], AS_HELP_STRING([--with-tls=...], [use coretls (macOS/iOS) or gnutls for TLS support]))
 AS_IF([test "x$with_tls" = x], [
     with_tls="yes"
-], [test "$with_tls" != cdsa -a "$with_tls" != gnutls -a "$with_tls" != no -a "$with_tls" != yes], [
+], [test "$with_tls" != cdsa -a "$with_tls" != coretls -a "$with_tls" != gnutls -a "$with_tls" != no -a "$with_tls" != yes], [
     AC_MSG_ERROR([Unsupported --with-tls value "$with_tls" specified.])
 ])
 
@@ -21,7 +21,29 @@ TLSLIBS=""
 have_tls="0"
 CUPS_SERVERKEYCHAIN=""
 
-dnl First try using CSDA SSL (macOS)...
+dnl First try using CoreTLS (macOS/iOS)...
+AS_IF([test $with_tls = yes -o $with_tls = coretls], [
+    dnl Look for CoreTLS...
+    SAVELIBS="$LIBS"
+    LIBS="-lcoretls"
+    AC_CHECK_FUNC([tls_handshake_create], [
+	have_tls="1"
+	with_tls="coretls"
+	AC_DEFINE([HAVE_TLS], [1], [Do we support TLS?])
+	AC_DEFINE([HAVE_CORETLS], [1], [Do we have the macOS/iOS CoreTLS API?])
+	TLSLIBS="-lcoretls"
+	AC_CHECK_HEADER([tls_handshake.h], [], [
+	    dnl If the header isn't present, use our local copy from <opensource.apple.com>
+	    TLSFLAGS="-I$(pwd)/xcode/coretls"
+	])
+	PKGCONFIG_LIBS_STATIC="$PKGCONFIG_LIBS_STATIC -lcoretls"
+    ], [test $with_tls = cdsa], [
+        AC_MSG_ERROR([--with-tls=coretls is not compatible with your host operating system.])
+    ])
+    LIBS="$SAVELIBS"
+])
+
+dnl Next try using CDSA (macOS/iOS)...
 AS_IF([test $with_tls = yes -o $with_tls = cdsa], [
     dnl Look for CDSA...
     AS_IF([test $host_os_name = darwin], [

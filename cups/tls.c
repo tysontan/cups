@@ -2,7 +2,7 @@
  * TLS routines for CUPS.
  *
  * Copyright © 2021 by OpenPrinting.
- * Copyright @2007-2014 by Apple Inc.
+ * Copyright @ 2007-2021 by Apple Inc.
  * Copyright @ 1997-2007 by Easy Software Products, all rights reserved.
  *
  * This file contains Kerberos support code, copyright 2006 by
@@ -39,6 +39,8 @@
 #ifdef HAVE_TLS
 #  ifdef HAVE_GNUTLS
 #    include "tls-gnutls.c"
+#  elif defined(HAVE_CORETLS)
+#    include "tls-coretls.c"
 #  elif defined(HAVE_CDSASSL)
 #    include "tls-darwin.c"
 #  elif defined(HAVE_SSPISSL)
@@ -87,8 +89,9 @@ int
 httpLoadCredentials(const char *path, cups_array_t **credentials, const char *common_name)
 {
   (void)path;
-  (void)credentials;
   (void)common_name;
+  if (credentials)
+    *credentials = NULL;
   return (-1);
 }
 int
