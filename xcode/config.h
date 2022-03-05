@@ -309,7 +309,6 @@
 #define HAVE_TLS 1
 #define HAVE_CDSASSL 1
 /* #undef HAVE_GNUTLS */
-/* #undef HAVE_SSPISSL */
 
 
 /*

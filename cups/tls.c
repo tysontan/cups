@@ -2,7 +2,7 @@
  * TLS routines for CUPS.
  *
  * Copyright © 2021-2022 by OpenPrinting.
- * Copyright @2007-2014 by Apple Inc.
+ * Copyright @ 2007-2014 by Apple Inc.
  * Copyright @ 1997-2007 by Easy Software Products, all rights reserved.
  *
  * This file contains Kerberos support code, copyright 2006 by
@@ -41,8 +41,8 @@
 #    include "tls-gnutls.c"
 #  elif defined(HAVE_CDSASSL)
 #    include "tls-darwin.c"
-#  elif defined(HAVE_SSPISSL)
-#    include "tls-sspi.c"
+#  elif _WIN32
+#    include "tls-win32.c"
 #  endif /* HAVE_GNUTLS */
 #else
 /* Stubs for when TLS is not supported/available */

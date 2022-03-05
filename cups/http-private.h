@@ -80,13 +80,13 @@ typedef int socklen_t;
 #      include <Security/SecCertificate.h>
 #      include <Security/SecIdentity.h>
 #    endif /* HAVE_SECCERTIFICATE_H */
-#  elif defined(HAVE_SSPISSL)
+#  elif _WIN32
 #    include <wincrypt.h>
 #    include <wintrust.h>
 #    include <schannel.h>
 #    define SECURITY_WIN32
 #    include <security.h>
-#    include <sspi.h>
+#    include <win32.h>
 #  endif /* HAVE_GNUTLS */
 
 #  ifndef _WIN32
@@ -157,12 +157,12 @@ typedef gnutls_certificate_credentials_t *http_tls_credentials_t;
 typedef SSLContextRef	http_tls_t;
 typedef CFArrayRef	http_tls_credentials_t;
 
-#  elif defined(HAVE_SSPISSL)
+#  elif _WIN32
 /*
- * Windows' SSPI library gets a CUPS wrapper...
+ * Windows' SChannel library gets a CUPS wrapper...
  */
 
-typedef struct _http_sspi_s		/**** SSPI/SSL data structure ****/
+typedef struct _http_win32_s		/**** SChannel TLS data ****/
 {
   CredHandle	creds;			/* Credentials */
   CtxtHandle	context;		/* SSL context */
@@ -179,8 +179,8 @@ typedef struct _http_sspi_s		/**** SSPI/SSL data structure ****/
   PCCERT_CONTEXT localCert,		/* Local certificate */
 		remoteCert;		/* Remote (peer's) certificate */
   char		error[256];		/* Most recent error message */
-} _http_sspi_t;
-typedef _http_sspi_t *http_tls_t;
+} _http_win32_t;
+typedef _http_win32_t *http_tls_t;
 typedef PCCERT_CONTEXT http_tls_credentials_t;
 
 #  else

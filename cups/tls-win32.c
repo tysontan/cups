@@ -1,6 +1,5 @@
 /*
- * TLS support for CUPS on Windows using the Security Support Provider
- * Interface (SSPI).
+ * SChannel TLS support for CUPS on Windows.
  *
  * Copyright © 2020-2022 by OpenPrinting.
  * Copyright © 2010-2018 by Apple Inc.
@@ -58,16 +57,16 @@ static int		tls_options = -1,/* Options for TLS connections */
  * Local functions...
  */
 
-static _http_sspi_t *http_sspi_alloc(void);
-static int	http_sspi_client(http_t *http, const char *hostname);
-static PCCERT_CONTEXT http_sspi_create_credential(http_credential_t *cred);
-static BOOL	http_sspi_find_credentials(http_t *http, const LPWSTR containerName, const char *common_name);
-static void	http_sspi_free(_http_sspi_t *sspi);
-static BOOL	http_sspi_make_credentials(_http_sspi_t *sspi, const LPWSTR containerName, const char *common_name, _http_mode_t mode, int years);
-static int	http_sspi_server(http_t *http, const char *hostname);
-static void	http_sspi_set_error(const char *title);
-static const char *http_sspi_strerror(char *buffer, size_t bufsize, DWORD code);
-static DWORD	http_sspi_verify(PCCERT_CONTEXT cert, const char *common_name, DWORD dwCertFlags);
+static _http_win32_t *http_win32_alloc(void);
+static int	http_win32_client(http_t *http, const char *hostname);
+static PCCERT_CONTEXT http_win32_create_credential(http_credential_t *cred);
+static BOOL	http_win32_find_credentials(http_t *http, const LPWSTR containerName, const char *common_name);
+static void	http_win32_free(_http_win32_t *win32);
+static BOOL	http_win32_make_credentials(_http_win32_t *win32, const LPWSTR containerName, const char *common_name, _http_mode_t mode, int years);
+static int	http_win32_server(http_t *http, const char *hostname);
+static void	http_win32_set_error(const char *title);
+static const char *http_win32_strerror(char *buffer, size_t bufsize, DWORD code);
+static DWORD	http_win32_verify(PCCERT_CONTEXT cert, const char *common_name, DWORD dwCertFlags);
 
 
 /*
@@ -76,13 +75,13 @@ static DWORD	http_sspi_verify(PCCERT_CONTEXT cert, const char *common_name, DWOR
 
 int					/* O - 1 on success, 0 on failure */
 cupsMakeServerCredentials(
-    const char *path,			/* I - Keychain path or @code NULL@ for default */
+    const char *path,			/* I - Keychain path or `NULL` for default */
     const char *common_name,		/* I - Common name */
     int        num_alt_names,		/* I - Number of subject alternate names */
     const char **alt_names,		/* I - Subject Alternate Names */
     time_t     expiration_date)		/* I - Expiration date */
 {
-  _http_sspi_t	*sspi;			/* SSPI data */
+  _http_win32_t	*win32;			/* SChannel data */
   int		ret;			/* Return value */
 
 
@@ -92,10 +91,10 @@ cupsMakeServerCredentials(
   (void)num_alt_names;
   (void)alt_names;
 
-  sspi = http_sspi_alloc();
-  ret  = http_sspi_make_credentials(sspi, L"ServerContainer", common_name, _HTTP_MODE_SERVER, (int)((expiration_date - time(NULL) + 86399) / 86400 / 365));
+  win32 = http_win32_alloc();
+  ret   = http_win32_make_credentials(win32, L"ServerContainer", common_name, _HTTP_MODE_SERVER, (int)((expiration_date - time(NULL) + 86399) / 86400 / 365));
 
-  http_sspi_free(sspi);
+  http_win32_free(win32);
 
   return (ret);
 }
@@ -110,7 +109,7 @@ cupsMakeServerCredentials(
 
 int					/* O - 1 on success, 0 on failure */
 cupsSetServerCredentials(
-    const char *path,			/* I - Keychain path or @code NULL@ for default */
+    const char *path,			/* I - Keychain path or `NULL` for default */
     const char *common_name,		/* I - Default common name for server */
     int        auto_create)		/* I - 1 = automatically create self-signed certificates */
 {
@@ -159,7 +158,7 @@ http_tls_credentials_t			/* O - Internal credentials */
 _httpCreateCredentials(
     cups_array_t *credentials)		/* I - Array of credentials */
 {
-  return (http_sspi_create_credential((http_credential_t *)cupsArrayFirst(credentials)));
+  return (http_win32_create_credential((http_credential_t *)cupsArrayFirst(credentials)));
 }
 
 
@@ -173,7 +172,7 @@ httpCredentialsAreValidForName(
     const char   *common_name)		/* I - Name to check */
 {
   int		valid = 1;		/* Valid name? */
-  PCCERT_CONTEXT cert = http_sspi_create_credential((http_credential_t *)cupsArrayFirst(credentials));
+  PCCERT_CONTEXT cert = http_win32_create_credential((http_credential_t *)cupsArrayFirst(credentials));
 					/* Certificate */
   char		cert_name[1024];	/* Name from certificate */
 
@@ -244,7 +243,7 @@ httpCredentialsGetTrust(
   if (!common_name)
     return (HTTP_TRUST_UNKNOWN);
 
-  cert = http_sspi_create_credential((http_credential_t *)cupsArrayFirst(credentials));
+  cert = http_win32_create_credential((http_credential_t *)cupsArrayFirst(credentials));
   if (!cert)
     return (HTTP_TRUST_UNKNOWN);
 
@@ -260,7 +259,7 @@ httpCredentialsGetTrust(
   if (!cg->validate_certs)
     certFlags |= SECURITY_FLAG_IGNORE_CERT_CN_INVALID;
 
-  if (http_sspi_verify(cert, common_name, certFlags) != SEC_E_OK)
+  if (http_win32_verify(cert, common_name, certFlags) != SEC_E_OK)
     trust = HTTP_TRUST_INVALID;
 
   CertFreeCertificateContext(cert);
@@ -278,7 +277,7 @@ httpCredentialsGetExpiration(
     cups_array_t *credentials)		/* I - Credentials */
 {
   time_t	expiration_date = 0;	/* Expiration data of credentials */
-  PCCERT_CONTEXT cert = http_sspi_create_credential((http_credential_t *)cupsArrayFirst(credentials));
+  PCCERT_CONTEXT cert = http_win32_create_credential((http_credential_t *)cupsArrayFirst(credentials));
 					/* Certificate */
 
   if (cert)
@@ -311,7 +310,7 @@ httpCredentialsGetExpiration(
 size_t					/* O - Total size of credentials string */
 httpCredentialsString(
     cups_array_t *credentials,		/* I - Credentials */
-    char         *buffer,		/* I - Buffer or @code NULL@ */
+    char         *buffer,		/* I - Buffer or `NULL` */
     size_t       bufsize)		/* I - Size of buffer */
 {
   http_credential_t	*first = (http_credential_t *)cupsArrayFirst(credentials);
@@ -327,7 +326,7 @@ httpCredentialsString(
   if (buffer && bufsize > 0)
     *buffer = '\0';
 
-  cert = http_sspi_create_credential(first);
+  cert = http_win32_create_credential(first);
 
   if (cert)
   {
@@ -395,7 +394,7 @@ _httpFreeCredentials(
 
 int					/* O - 0 on success, -1 on error */
 httpLoadCredentials(
-    const char   *path,			/* I  - Keychain path or @code NULL@ for default */
+    const char   *path,			/* I  - Keychain path or `NULL` for default */
     cups_array_t **credentials,		/* IO - Credentials */
     const char   *common_name)		/* I  - Common name for credentials */
 {
@@ -437,8 +436,8 @@ httpLoadCredentials(
     {
       if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
       {
-        DEBUG_printf(("1httpLoadCredentials: CryptAcquireContext failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-        http_sspi_set_error("CryptAquireContext");
+        DEBUG_printf(("1httpLoadCredentials: CryptAcquireContext failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+        http_win32_set_error("CryptAquireContext");
         goto cleanup;
       }
     }
@@ -448,8 +447,8 @@ httpLoadCredentials(
 
   if (!store)
   {
-    DEBUG_printf(("1httpLoadCredentials: CertOpenSystemStore failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertOpenSystemStore");
+    DEBUG_printf(("1httpLoadCredentials: CertOpenSystemStore failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertOpenSystemStore");
     goto cleanup;
   }
 
@@ -457,8 +456,8 @@ httpLoadCredentials(
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, NULL, &dwSize, NULL))
   {
-    DEBUG_printf(("1httpLoadCredentials: CertStrToName failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertStrToName");
+    DEBUG_printf(("1httpLoadCredentials: CertStrToName failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertStrToName");
     goto cleanup;
   }
 
@@ -473,8 +472,8 @@ httpLoadCredentials(
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, p, &dwSize, NULL))
   {
-    DEBUG_printf(("1httpLoadCredentials: CertStrToName failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertStrToName");
+    DEBUG_printf(("1httpLoadCredentials: CertStrToName failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertStrToName");
     goto cleanup;
   }
 
@@ -522,7 +521,7 @@ cleanup:
 
 int					/* O - -1 on error, 0 on success */
 httpSaveCredentials(
-    const char   *path,			/* I - Keychain path or @code NULL@ for default */
+    const char   *path,			/* I - Keychain path or `NULL` for default */
     cups_array_t *credentials,		/* I - Credentials */
     const char   *common_name)		/* I - Common name for credentials */
 {
@@ -550,7 +549,7 @@ httpSaveCredentials(
     return (-1);
   }
 
-  createdContext = http_sspi_create_credential((http_credential_t *)cupsArrayFirst(credentials));
+  createdContext = http_win32_create_credential((http_credential_t *)cupsArrayFirst(credentials));
   if (!createdContext)
   {
     DEBUG_puts("1httpSaveCredentials: Bad credentials, returning -1.");
@@ -563,8 +562,8 @@ httpSaveCredentials(
     {
       if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
       {
-        DEBUG_printf(("1httpSaveCredentials: CryptAcquireContext failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-        http_sspi_set_error("CryptAquireContext");
+        DEBUG_printf(("1httpSaveCredentials: CryptAcquireContext failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+        http_win32_set_error("CryptAquireContext");
         goto cleanup;
       }
     }
@@ -574,8 +573,8 @@ httpSaveCredentials(
 
   if (!store)
   {
-    DEBUG_printf(("1httpSaveCredentials: CertOpenSystemStore failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertOpenSystemStore");
+    DEBUG_printf(("1httpSaveCredentials: CertOpenSystemStore failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertOpenSystemStore");
     goto cleanup;
   }
 
@@ -583,8 +582,8 @@ httpSaveCredentials(
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, NULL, &dwSize, NULL))
   {
-    DEBUG_printf(("1httpSaveCredentials: CertStrToName failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertStrToName");
+    DEBUG_printf(("1httpSaveCredentials: CertStrToName failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertStrToName");
     goto cleanup;
   }
 
@@ -599,8 +598,8 @@ httpSaveCredentials(
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, p, &dwSize, NULL))
   {
-    DEBUG_printf(("1httpSaveCredentials: CertStrToName failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertToToName");
+    DEBUG_printf(("1httpSaveCredentials: CertStrToName failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertToToName");
     goto cleanup;
   }
 
@@ -611,8 +610,8 @@ httpSaveCredentials(
 
   if (!CertAddCertificateContextToStore(store, createdContext, CERT_STORE_ADD_REPLACE_EXISTING, &storedContext))
   {
-    DEBUG_printf(("1httpSaveCredentials: CertAddCertificateContextToStore failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertAddCertificateContextToStore");
+    DEBUG_printf(("1httpSaveCredentials: CertAddCertificateContextToStore failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertAddCertificateContextToStore");
     goto cleanup;
   }
 
@@ -625,8 +624,8 @@ httpSaveCredentials(
 
   if (!CertSetCertificateContextProperty(storedContext, CERT_KEY_PROV_INFO_PROP_ID, 0, &ckp))
   {
-    DEBUG_printf(("1httpSaveCredentials: CertSetCertificateContextProperty failed: %s", http_sspi_strerror(error, sizeof(error), GetLastError())));
-    http_sspi_set_error("CertSetCertificateContextProperty");
+    DEBUG_printf(("1httpSaveCredentials: CertSetCertificateContextProperty failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
+    http_win32_set_error("CertSetCertificateContextProperty");
     goto cleanup;
   }
 
@@ -701,13 +700,13 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
 	     int    len)		/* I - Length of buffer */
 {
   int		i;			/* Looping var */
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
   SecBufferDesc	message;		/* Array of SecBuffer struct */
   SecBuffer	buffers[4] = { 0 };	/* Security package buffer */
   int		num = 0;		/* Return value */
   PSecBuffer	pDataBuffer;		/* Data buffer */
   PSecBuffer	pExtraBuffer;		/* Excess data buffer */
-  SECURITY_STATUS scRet;		/* SSPI status */
+  SECURITY_STATUS scRet;		/* SChannel status */
 
 
   DEBUG_printf(("4_httpTLSRead(http=%p, buf=%p, len=%d)", http, buf, len));
@@ -717,16 +716,16 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
   * read, return those...
   */
 
-  if (sspi->readBufferUsed > 0)
+  if (win32->readBufferUsed > 0)
   {
-    int bytesToCopy = min(sspi->readBufferUsed, len);
+    int bytesToCopy = min(win32->readBufferUsed, len);
 					/* Number of bytes to copy */
 
-    memcpy(buf, sspi->readBuffer, bytesToCopy);
-    sspi->readBufferUsed -= bytesToCopy;
+    memcpy(buf, win32->readBuffer, bytesToCopy);
+    win32->readBufferUsed -= bytesToCopy;
 
-    if (sspi->readBufferUsed > 0)
-      memmove(sspi->readBuffer, sspi->readBuffer + bytesToCopy, sspi->readBufferUsed);
+    if (win32->readBufferUsed > 0)
+      memmove(win32->readBuffer, win32->readBuffer + bytesToCopy, win32->readBufferUsed);
 
     DEBUG_printf(("5_httpTLSRead: Returning %d bytes previously decrypted.", bytesToCopy));
 
@@ -747,44 +746,44 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
     * If there is not enough space in the buffer, then increase its size...
     */
 
-    if (sspi->decryptBufferLength <= sspi->decryptBufferUsed)
+    if (win32->decryptBufferLength <= win32->decryptBufferUsed)
     {
       BYTE *temp;			/* New buffer */
 
-      if (sspi->decryptBufferLength >= 262144)
+      if (win32->decryptBufferLength >= 262144)
       {
 	WSASetLastError(E_OUTOFMEMORY);
         DEBUG_puts("5_httpTLSRead: Decryption buffer too large (>256k)");
 	return (-1);
       }
 
-      if ((temp = realloc(sspi->decryptBuffer, sspi->decryptBufferLength + 4096)) == NULL)
+      if ((temp = realloc(win32->decryptBuffer, win32->decryptBufferLength + 4096)) == NULL)
       {
-	DEBUG_printf(("5_httpTLSRead: Unable to allocate %d byte decryption buffer.", sspi->decryptBufferLength + 4096));
+	DEBUG_printf(("5_httpTLSRead: Unable to allocate %d byte decryption buffer.", win32->decryptBufferLength + 4096));
 	WSASetLastError(E_OUTOFMEMORY);
 	return (-1);
       }
 
-      sspi->decryptBufferLength += 4096;
-      sspi->decryptBuffer       = temp;
+      win32->decryptBufferLength += 4096;
+      win32->decryptBuffer       = temp;
 
-      DEBUG_printf(("5_httpTLSRead: Resized decryption buffer to %d bytes.", sspi->decryptBufferLength));
+      DEBUG_printf(("5_httpTLSRead: Resized decryption buffer to %d bytes.", win32->decryptBufferLength));
     }
 
-    buffers[0].pvBuffer	  = sspi->decryptBuffer;
-    buffers[0].cbBuffer	  = (unsigned long)sspi->decryptBufferUsed;
+    buffers[0].pvBuffer	  = win32->decryptBuffer;
+    buffers[0].cbBuffer	  = (unsigned long)win32->decryptBufferUsed;
     buffers[0].BufferType = SECBUFFER_DATA;
     buffers[1].BufferType = SECBUFFER_EMPTY;
     buffers[2].BufferType = SECBUFFER_EMPTY;
     buffers[3].BufferType = SECBUFFER_EMPTY;
 
-    DEBUG_printf(("5_httpTLSRead: decryptBufferUsed=%d", sspi->decryptBufferUsed));
+    DEBUG_printf(("5_httpTLSRead: decryptBufferUsed=%d", win32->decryptBufferUsed));
 
-    scRet = DecryptMessage(&sspi->context, &message, 0, NULL);
+    scRet = DecryptMessage(&win32->context, &message, 0, NULL);
 
     if (scRet == SEC_E_INCOMPLETE_MESSAGE)
     {
-      num = recv(http->fd, sspi->decryptBuffer + sspi->decryptBufferUsed, (int)(sspi->decryptBufferLength - sspi->decryptBufferUsed), 0);
+      num = recv(http->fd, win32->decryptBuffer + win32->decryptBufferUsed, (int)(win32->decryptBufferLength - win32->decryptBufferUsed), 0);
       if (num < 0)
       {
 	DEBUG_printf(("5_httpTLSRead: recv failed: %d", WSAGetLastError()));
@@ -798,22 +797,22 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
 
       DEBUG_printf(("5_httpTLSRead: Read %d bytes into decryption buffer.", num));
 
-      sspi->decryptBufferUsed += num;
+      win32->decryptBufferUsed += num;
     }
   }
   while (scRet == SEC_E_INCOMPLETE_MESSAGE);
 
   if (scRet == SEC_I_CONTEXT_EXPIRED)
   {
-    http_sspi_set_error("DecryptMessage");
+    http_win32_set_error("DecryptMessage");
     DEBUG_puts("5_httpTLSRead: Context expired.");
     WSASetLastError(WSAECONNRESET);
     return (-1);
   }
   else if (scRet != SEC_E_OK)
   {
-    http_sspi_set_error("DecryptMessage");
-    DEBUG_printf(("5_httpTLSRead: DecryptMessage failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+    http_win32_set_error("DecryptMessage");
+    DEBUG_printf(("5_httpTLSRead: DecryptMessage failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
     WSASetLastError(WSASYSCALLFAILURE);
     return (-1);
   }
@@ -855,25 +854,25 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
 
     if (bytesToSave)
     {
-      if ((sspi->readBufferLength - sspi->readBufferUsed) < bytesToSave)
+      if ((win32->readBufferLength - win32->readBufferUsed) < bytesToSave)
       {
         BYTE *temp;			/* New buffer pointer */
 
-        if ((temp = realloc(sspi->readBuffer, sspi->readBufferUsed + bytesToSave)) == NULL)
+        if ((temp = realloc(win32->readBuffer, win32->readBufferUsed + bytesToSave)) == NULL)
 	{
 	  _cupsSetHTTPError(HTTP_STATUS_ERROR);
-	  DEBUG_printf(("5_httpTLSRead: Unable to allocate %d bytes.", sspi->readBufferUsed + bytesToSave));
+	  DEBUG_printf(("5_httpTLSRead: Unable to allocate %d bytes.", win32->readBufferUsed + bytesToSave));
 	  WSASetLastError(E_OUTOFMEMORY);
 	  return (-1);
 	}
 
-	sspi->readBufferLength = sspi->readBufferUsed + bytesToSave;
-	sspi->readBuffer       = temp;
+	win32->readBufferLength = win32->readBufferUsed + bytesToSave;
+	win32->readBuffer       = temp;
       }
 
-      memcpy(((BYTE *)sspi->readBuffer) + sspi->readBufferUsed, ((BYTE *)pDataBuffer->pvBuffer) + bytesToCopy, bytesToSave);
+      memcpy(((BYTE *)win32->readBuffer) + win32->readBufferUsed, ((BYTE *)pDataBuffer->pvBuffer) + bytesToCopy, bytesToSave);
 
-      sspi->readBufferUsed += bytesToSave;
+      win32->readBufferUsed += bytesToSave;
     }
 
     num = bytesToCopy;
@@ -893,12 +892,12 @@ _httpTLSRead(http_t *http,		/* I - HTTP connection */
 
   if (pExtraBuffer)
   {
-    memmove(sspi->decryptBuffer, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
-    sspi->decryptBufferUsed = pExtraBuffer->cbBuffer;
+    memmove(win32->decryptBuffer, pExtraBuffer->pvBuffer, pExtraBuffer->cbBuffer);
+    win32->decryptBufferUsed = pExtraBuffer->cbBuffer;
   }
   else
   {
-    sspi->decryptBufferUsed = 0;
+    win32->decryptBufferUsed = 0;
   }
 
   return (num);
@@ -943,7 +942,7 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
     DEBUG_printf(("4_httpTLSStart: tls_options=%x", tls_options));
   }
 
-  if ((http->tls = http_sspi_alloc()) == NULL)
+  if ((http->tls = http_win32_alloc()) == NULL)
     return (-1);
 
   if (http->mode == _HTTP_MODE_CLIENT)
@@ -968,7 +967,7 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
 	*hostptr = '\0';
     }
 
-    return (http_sspi_client(http, hostname));
+    return (http_win32_client(http, hostname));
   }
   else
   {
@@ -1010,7 +1009,7 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
 
 //    fprintf(stderr, "_httpTLSStart: Using hostname '%s'.\n", hostname);
 
-    return (http_sspi_server(http, hostname));
+    return (http_win32_server(http, hostname));
   }
 }
 
@@ -1022,10 +1021,10 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
 void
 _httpTLSStop(http_t *http)		/* I - HTTP connection */
 {
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
 
 
-  if (sspi->contextInitialized && http->fd >= 0)
+  if (win32->contextInitialized && http->fd >= 0)
   {
     SecBufferDesc	message;	/* Array of SecBuffer struct */
     SecBuffer		buffers[1] = { 0 };
@@ -1047,18 +1046,18 @@ _httpTLSStop(http_t *http)		/* I - HTTP connection */
    message.pBuffers  = buffers;
    message.ulVersion = SECBUFFER_VERSION;
 
-   status = ApplyControlToken(&sspi->context, &message);
+   status = ApplyControlToken(&win32->context, &message);
 
    if (SUCCEEDED(status))
    {
      PBYTE	pbMessage;		/* Message buffer */
      DWORD	cbMessage;		/* Message buffer count */
      DWORD	cbData;			/* Data count */
-     DWORD	dwSSPIFlags;		/* SSL attributes we requested */
-     DWORD	dwSSPIOutFlags;		/* SSL attributes we received */
+     DWORD	dwSChannelFlags;		/* SSL attributes we requested */
+     DWORD	dwSChannelOutFlags;		/* SSL attributes we received */
      TimeStamp	tsExpiry;		/* Time stamp */
 
-     dwSSPIFlags = ASC_REQ_SEQUENCE_DETECT     |
+     dwSChannelFlags = ASC_REQ_SEQUENCE_DETECT     |
                    ASC_REQ_REPLAY_DETECT       |
                    ASC_REQ_CONFIDENTIALITY     |
                    ASC_REQ_EXTENDED_ERROR      |
@@ -1073,9 +1072,9 @@ _httpTLSStop(http_t *http)		/* I - HTTP connection */
      message.pBuffers  = buffers;
      message.ulVersion = SECBUFFER_VERSION;
 
-     status = AcceptSecurityContext(&sspi->creds, &sspi->context, NULL,
-                                    dwSSPIFlags, SECURITY_NATIVE_DREP, NULL,
-                                    &message, &dwSSPIOutFlags, &tsExpiry);
+     status = AcceptSecurityContext(&win32->creds, &win32->context, NULL,
+                                    dwSChannelFlags, SECURITY_NATIVE_DREP, NULL,
+                                    &message, &dwSChannelOutFlags, &tsExpiry);
 
       if (SUCCEEDED(status))
       {
@@ -1102,18 +1101,18 @@ _httpTLSStop(http_t *http)		/* I - HTTP connection */
       }
       else
       {
-	http_sspi_set_error("AcceptSecurityContext");
-        DEBUG_printf(("4_httpTLSStop: AcceptSecurityContext failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), status)));
+	http_win32_set_error("AcceptSecurityContext");
+        DEBUG_printf(("4_httpTLSStop: AcceptSecurityContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), status)));
       }
     }
     else
     {
-      http_sspi_set_error("ApplyControlToken");
-      DEBUG_printf(("4_httpTLSStop: ApplyControlToken failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), status)));
+      http_win32_set_error("ApplyControlToken");
+      DEBUG_printf(("4_httpTLSStop: ApplyControlToken failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), status)));
     }
   }
 
-  http_sspi_free(sspi);
+  http_win32_free(win32);
 
   http->tls = NULL;
 }
@@ -1128,7 +1127,7 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
 	      const char *buf,		/* I - Buffer holding data */
 	      int        len)		/* I - Length of buffer */
 {
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
   SecBufferDesc	message;		/* Array of SecBuffer struct */
   SecBuffer	buffers[4] = { 0 };	/* Security package buffer */
   int		bufferLen;		/* Buffer length */
@@ -1137,13 +1136,13 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
   int		num = 0;		/* Return value */
 
 
-  bufferLen = sspi->streamSizes.cbMaximumMessage + sspi->streamSizes.cbHeader + sspi->streamSizes.cbTrailer;
+  bufferLen = win32->streamSizes.cbMaximumMessage + win32->streamSizes.cbHeader + win32->streamSizes.cbTrailer;
 
-  if (bufferLen > sspi->writeBufferLength)
+  if (bufferLen > win32->writeBufferLength)
   {
     BYTE *temp;				/* New buffer pointer */
 
-    if ((temp = (BYTE *)realloc(sspi->writeBuffer, bufferLen)) == NULL)
+    if ((temp = (BYTE *)realloc(win32->writeBuffer, bufferLen)) == NULL)
     {
       _cupsSetHTTPError(HTTP_STATUS_ERROR);
       DEBUG_printf(("5_httpTLSWrite: Unable to allocate buffer of %d bytes.", bufferLen));
@@ -1151,8 +1150,8 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
       return (-1);
     }
 
-    sspi->writeBuffer       = temp;
-    sspi->writeBufferLength = bufferLen;
+    win32->writeBuffer       = temp;
+    win32->writeBufferLength = bufferLen;
   }
 
   bytesLeft = len;
@@ -1160,32 +1159,32 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
 
   while (bytesLeft)
   {
-    int chunk = min((int)sspi->streamSizes.cbMaximumMessage, bytesLeft);
+    int chunk = min((int)win32->streamSizes.cbMaximumMessage, bytesLeft);
 					/* Size of data to write */
-    SECURITY_STATUS scRet;		/* SSPI status */
+    SECURITY_STATUS scRet;		/* SChannel status */
 
    /*
     * Copy user data into the buffer, starting just past the header...
     */
 
-    memcpy(sspi->writeBuffer + sspi->streamSizes.cbHeader, bufptr, chunk);
+    memcpy(win32->writeBuffer + win32->streamSizes.cbHeader, bufptr, chunk);
 
    /*
-    * Setup the SSPI buffers
+    * Setup the SChannel buffers
     */
 
     message.ulVersion = SECBUFFER_VERSION;
     message.cBuffers  = 4;
     message.pBuffers  = buffers;
 
-    buffers[0].pvBuffer   = sspi->writeBuffer;
-    buffers[0].cbBuffer   = sspi->streamSizes.cbHeader;
+    buffers[0].pvBuffer   = win32->writeBuffer;
+    buffers[0].cbBuffer   = win32->streamSizes.cbHeader;
     buffers[0].BufferType = SECBUFFER_STREAM_HEADER;
-    buffers[1].pvBuffer   = sspi->writeBuffer + sspi->streamSizes.cbHeader;
+    buffers[1].pvBuffer   = win32->writeBuffer + win32->streamSizes.cbHeader;
     buffers[1].cbBuffer   = (unsigned long) chunk;
     buffers[1].BufferType = SECBUFFER_DATA;
-    buffers[2].pvBuffer   = sspi->writeBuffer + sspi->streamSizes.cbHeader + chunk;
-    buffers[2].cbBuffer   = sspi->streamSizes.cbTrailer;
+    buffers[2].pvBuffer   = win32->writeBuffer + win32->streamSizes.cbHeader + chunk;
+    buffers[2].cbBuffer   = win32->streamSizes.cbTrailer;
     buffers[2].BufferType = SECBUFFER_STREAM_TRAILER;
     buffers[3].BufferType = SECBUFFER_EMPTY;
 
@@ -1193,12 +1192,12 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
     * Encrypt the data
     */
 
-    scRet = EncryptMessage(&sspi->context, 0, &message, 0);
+    scRet = EncryptMessage(&win32->context, 0, &message, 0);
 
     if (FAILED(scRet))
     {
-      http_sspi_set_error("EncryptMessage");
-      DEBUG_printf(("5_httpTLSWrite: EncryptMessage failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("EncryptMessage");
+      DEBUG_printf(("5_httpTLSWrite: EncryptMessage failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       WSASetLastError(WSASYSCALLFAILURE);
       return (-1);
     }
@@ -1209,7 +1208,7 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
     * of the trailer...
     */
 
-    num = send(http->fd, sspi->writeBuffer, buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer, 0);
+    num = send(http->fd, win32->writeBuffer, buffers[0].cbBuffer + buffers[1].cbBuffer + buffers[2].cbBuffer, 0);
 
     if (num <= 0)
     {
@@ -1226,27 +1225,27 @@ _httpTLSWrite(http_t     *http,		/* I - HTTP connection */
 
 
 /*
- * 'http_sspi_alloc()' - Allocate SSPI object.
+ * 'http_win32_alloc()' - Allocate SChannel object.
  */
 
-static _http_sspi_t *			/* O  - New SSPI/SSL object */
-http_sspi_alloc(void)
+static _http_win32_t *			/* O  - New SChannel/SSL object */
+http_win32_alloc(void)
 {
-  return ((_http_sspi_t *)calloc(sizeof(_http_sspi_t), 1));
+  return ((_http_win32_t *)calloc(sizeof(_http_win32_t), 1));
 }
 
 
 /*
- * 'http_sspi_client()' - Negotiate a TLS connection as a client.
+ * 'http_win32_client()' - Negotiate a TLS connection as a client.
  */
 
 static int				/* O - 0 on success, -1 on failure */
-http_sspi_client(http_t     *http,	/* I - Client connection */
+http_win32_client(http_t     *http,	/* I - Client connection */
                  const char *hostname)	/* I - Server hostname */
 {
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
-  DWORD		dwSSPIFlags;		/* SSL connection attributes we want */
-  DWORD		dwSSPIOutFlags;		/* SSL connection attributes we got */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
+  DWORD		dwSChannelFlags;		/* SSL connection attributes we want */
+  DWORD		dwSChannelOutFlags;		/* SSL connection attributes we got */
   TimeStamp	tsExpiry;		/* Time stamp */
   SECURITY_STATUS scRet;		/* Status */
   int		cbData;			/* Data count */
@@ -1257,9 +1256,9 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
   int		ret = 0;		/* Return value */
 
 
-  DEBUG_printf(("4http_sspi_client(http=%p, hostname=\"%s\")", http, hostname));
+  DEBUG_printf(("4http_win32_client(http=%p, hostname=\"%s\")", http, hostname));
 
-  dwSSPIFlags = ISC_REQ_SEQUENCE_DETECT   |
+  dwSChannelFlags = ISC_REQ_SEQUENCE_DETECT   |
                 ISC_REQ_REPLAY_DETECT     |
                 ISC_REQ_CONFIDENTIALITY   |
                 ISC_RET_EXTENDED_ERROR    |
@@ -1270,9 +1269,9 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
   * Lookup the client certificate...
   */
 
-  if (!http_sspi_find_credentials(http, L"ClientContainer", NULL))
+  if (!http_win32_find_credentials(http, L"ClientContainer", NULL))
   {
-    DEBUG_puts("5http_sspi_client: Unable to get client credentials.");
+    DEBUG_puts("5http_win32_client: Unable to get client credentials.");
     return (-1);
   }
 
@@ -1288,12 +1287,12 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
   outBuffer.pBuffers  = outBuffers;
   outBuffer.ulVersion = SECBUFFER_VERSION;
 
-  scRet = InitializeSecurityContext(&sspi->creds, NULL, TEXT(""), dwSSPIFlags, 0, SECURITY_NATIVE_DREP, NULL, 0, &sspi->context, &outBuffer, &dwSSPIOutFlags, &tsExpiry);
+  scRet = InitializeSecurityContext(&win32->creds, NULL, TEXT(""), dwSChannelFlags, 0, SECURITY_NATIVE_DREP, NULL, 0, &win32->context, &outBuffer, &dwSChannelOutFlags, &tsExpiry);
 
   if (scRet != SEC_I_CONTINUE_NEEDED)
   {
-    http_sspi_set_error("InitializeSecurityContext");
-    DEBUG_printf(("5http_sspi_client: InitializeSecurityContext(1) failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+    http_win32_set_error("InitializeSecurityContext");
+    DEBUG_printf(("5http_win32_client: InitializeSecurityContext(1) failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
     return (-1);
   }
 
@@ -1305,19 +1304,19 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
   {
     if ((cbData = send(http->fd, outBuffers[0].pvBuffer, outBuffers[0].cbBuffer, 0)) <= 0)
     {
-      DEBUG_printf(("5http_sspi_client: send failed: %d", WSAGetLastError()));
+      DEBUG_printf(("5http_win32_client: send failed: %d", WSAGetLastError()));
       FreeContextBuffer(outBuffers[0].pvBuffer);
-      DeleteSecurityContext(&sspi->context);
+      DeleteSecurityContext(&win32->context);
       return (-1);
     }
 
-    DEBUG_printf(("5http_sspi_client: %d bytes of handshake data sent.", cbData));
+    DEBUG_printf(("5http_win32_client: %d bytes of handshake data sent.", cbData));
 
     FreeContextBuffer(outBuffers[0].pvBuffer);
     outBuffers[0].pvBuffer = NULL;
   }
 
-  dwSSPIFlags = ISC_REQ_MANUAL_CRED_VALIDATION |
+  dwSChannelFlags = ISC_REQ_MANUAL_CRED_VALIDATION |
 		ISC_REQ_SEQUENCE_DETECT        |
                 ISC_REQ_REPLAY_DETECT          |
                 ISC_REQ_CONFIDENTIALITY        |
@@ -1325,7 +1324,7 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
                 ISC_REQ_ALLOCATE_MEMORY        |
                 ISC_REQ_STREAM;
 
-  sspi->decryptBufferUsed = 0;
+  win32->decryptBufferUsed = 0;
 
  /*
   * Loop until the handshake is finished or an error occurs.
@@ -1337,47 +1336,47 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
         scRet == SEC_E_INCOMPLETE_MESSAGE     ||
         scRet == SEC_I_INCOMPLETE_CREDENTIALS)
   {
-    if (sspi->decryptBufferUsed == 0 || scRet == SEC_E_INCOMPLETE_MESSAGE)
+    if (win32->decryptBufferUsed == 0 || scRet == SEC_E_INCOMPLETE_MESSAGE)
     {
-      if (sspi->decryptBufferLength <= sspi->decryptBufferUsed)
+      if (win32->decryptBufferLength <= win32->decryptBufferUsed)
       {
 	BYTE *temp;			/* New buffer */
 
-	if (sspi->decryptBufferLength >= 262144)
+	if (win32->decryptBufferLength >= 262144)
 	{
 	  WSASetLastError(E_OUTOFMEMORY);
-	  DEBUG_puts("5http_sspi_client: Decryption buffer too large (>256k)");
+	  DEBUG_puts("5http_win32_client: Decryption buffer too large (>256k)");
 	  return (-1);
 	}
 
-	if ((temp = realloc(sspi->decryptBuffer, sspi->decryptBufferLength + 4096)) == NULL)
+	if ((temp = realloc(win32->decryptBuffer, win32->decryptBufferLength + 4096)) == NULL)
 	{
 	  _cupsSetHTTPError(HTTP_STATUS_ERROR);
-	  DEBUG_printf(("5http_sspi_client: Unable to allocate %d byte buffer.", sspi->decryptBufferLength + 4096));
+	  DEBUG_printf(("5http_win32_client: Unable to allocate %d byte buffer.", win32->decryptBufferLength + 4096));
 	  WSASetLastError(E_OUTOFMEMORY);
 	  return (-1);
 	}
 
-	sspi->decryptBufferLength += 4096;
-	sspi->decryptBuffer       = temp;
+	win32->decryptBufferLength += 4096;
+	win32->decryptBuffer       = temp;
       }
 
-      cbData = recv(http->fd, sspi->decryptBuffer + sspi->decryptBufferUsed, (int)(sspi->decryptBufferLength - sspi->decryptBufferUsed), 0);
+      cbData = recv(http->fd, win32->decryptBuffer + win32->decryptBufferUsed, (int)(win32->decryptBufferLength - win32->decryptBufferUsed), 0);
 
       if (cbData < 0)
       {
-        DEBUG_printf(("5http_sspi_client: recv failed: %d", WSAGetLastError()));
+        DEBUG_printf(("5http_win32_client: recv failed: %d", WSAGetLastError()));
         return (-1);
       }
       else if (cbData == 0)
       {
-        DEBUG_printf(("5http_sspi_client: Server unexpectedly disconnected."));
+        DEBUG_printf(("5http_win32_client: Server unexpectedly disconnected."));
         return (-1);
       }
 
-      DEBUG_printf(("5http_sspi_client: %d bytes of handshake data received", cbData));
+      DEBUG_printf(("5http_win32_client: %d bytes of handshake data received", cbData));
 
-      sspi->decryptBufferUsed += cbData;
+      win32->decryptBufferUsed += cbData;
     }
 
    /*
@@ -1387,8 +1386,8 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
     * SECBUFFER_EXTRA.
     */
 
-    inBuffers[0].pvBuffer   = sspi->decryptBuffer;
-    inBuffers[0].cbBuffer   = (unsigned long)sspi->decryptBufferUsed;
+    inBuffers[0].pvBuffer   = win32->decryptBuffer;
+    inBuffers[0].cbBuffer   = (unsigned long)win32->decryptBufferUsed;
     inBuffers[0].BufferType = SECBUFFER_TOKEN;
 
     inBuffers[1].pvBuffer   = NULL;
@@ -1416,7 +1415,7 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
     * Call InitializeSecurityContext.
     */
 
-    scRet = InitializeSecurityContext(&sspi->creds, &sspi->context, NULL, dwSSPIFlags, 0, SECURITY_NATIVE_DREP, &inBuffer, 0, NULL, &outBuffer, &dwSSPIOutFlags, &tsExpiry);
+    scRet = InitializeSecurityContext(&win32->creds, &win32->context, NULL, dwSChannelFlags, 0, SECURITY_NATIVE_DREP, &inBuffer, 0, NULL, &outBuffer, &dwSChannelOutFlags, &tsExpiry);
 
    /*
     * If InitializeSecurityContext was successful (or if the error was one of
@@ -1426,7 +1425,7 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
 
     if (scRet == SEC_E_OK                ||
         scRet == SEC_I_CONTINUE_NEEDED   ||
-        FAILED(scRet) && (dwSSPIOutFlags & ISC_RET_EXTENDED_ERROR))
+        FAILED(scRet) && (dwSChannelOutFlags & ISC_RET_EXTENDED_ERROR))
     {
       if (outBuffers[0].cbBuffer && outBuffers[0].pvBuffer)
       {
@@ -1434,13 +1433,13 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
 
         if (cbData <= 0)
         {
-          DEBUG_printf(("5http_sspi_client: send failed: %d", WSAGetLastError()));
+          DEBUG_printf(("5http_win32_client: send failed: %d", WSAGetLastError()));
           FreeContextBuffer(outBuffers[0].pvBuffer);
-          DeleteSecurityContext(&sspi->context);
+          DeleteSecurityContext(&win32->context);
           return (-1);
         }
 
-        DEBUG_printf(("5http_sspi_client: %d bytes of handshake data sent.", cbData));
+        DEBUG_printf(("5http_win32_client: %d bytes of handshake data sent.", cbData));
 
        /*
         * Free output buffer.
@@ -1472,18 +1471,18 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
       * later decrypt it with DecryptMessage.
       */
 
-      DEBUG_puts("5http_sspi_client: Handshake was successful.");
+      DEBUG_puts("5http_win32_client: Handshake was successful.");
 
       if (inBuffers[1].BufferType == SECBUFFER_EXTRA)
       {
-        memmove(sspi->decryptBuffer, sspi->decryptBuffer + sspi->decryptBufferUsed - inBuffers[1].cbBuffer, inBuffers[1].cbBuffer);
+        memmove(win32->decryptBuffer, win32->decryptBuffer + win32->decryptBufferUsed - inBuffers[1].cbBuffer, inBuffers[1].cbBuffer);
 
-        sspi->decryptBufferUsed = inBuffers[1].cbBuffer;
+        win32->decryptBufferUsed = inBuffers[1].cbBuffer;
 
-        DEBUG_printf(("5http_sspi_client: %d bytes of app data was bundled with handshake data", sspi->decryptBufferUsed));
+        DEBUG_printf(("5http_win32_client: %d bytes of app data was bundled with handshake data", win32->decryptBufferUsed));
       }
       else
-        sspi->decryptBufferUsed = 0;
+        win32->decryptBufferUsed = 0;
 
      /*
       * Bail out to quit
@@ -1498,8 +1497,8 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
 
     if (FAILED(scRet))
     {
-      http_sspi_set_error("InitializeSecurityContext");
-      DEBUG_printf(("5http_sspi_client: InitializeSecurityContext(2) failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("InitializeSecurityContext");
+      DEBUG_printf(("5http_win32_client: InitializeSecurityContext(2) failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       ret = -1;
       break;
     }
@@ -1516,7 +1515,7 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
       */
 
       _cupsSetError(IPP_STATUS_ERROR_CUPS_PKI, "Need client credentials.", 0);
-      DEBUG_printf(("5http_sspi_client: server requested client credentials."));
+      DEBUG_printf(("5http_win32_client: server requested client credentials."));
       ret = -1;
       break;
     }
@@ -1527,13 +1526,13 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
 
     if (inBuffers[1].BufferType == SECBUFFER_EXTRA)
     {
-      memmove(sspi->decryptBuffer, sspi->decryptBuffer + sspi->decryptBufferUsed - inBuffers[1].cbBuffer, inBuffers[1].cbBuffer);
+      memmove(win32->decryptBuffer, win32->decryptBuffer + win32->decryptBufferUsed - inBuffers[1].cbBuffer, inBuffers[1].cbBuffer);
 
-      sspi->decryptBufferUsed = inBuffers[1].cbBuffer;
+      win32->decryptBufferUsed = inBuffers[1].cbBuffer;
     }
     else
     {
-      sspi->decryptBufferUsed = 0;
+      win32->decryptBufferUsed = 0;
     }
   }
 
@@ -1543,14 +1542,14 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
     * Success!  Get the server cert
     */
 
-    sspi->contextInitialized = TRUE;
+    win32->contextInitialized = TRUE;
 
-    scRet = QueryContextAttributes(&sspi->context, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (VOID *)&(sspi->remoteCert));
+    scRet = QueryContextAttributes(&win32->context, SECPKG_ATTR_REMOTE_CERT_CONTEXT, (VOID *)&(win32->remoteCert));
 
     if (scRet != SEC_E_OK)
     {
-      http_sspi_set_error("QueryContextAttributes");
-      DEBUG_printf(("5http_sspi_client: QueryContextAttributes failed(SECPKG_ATTR_REMOTE_CERT_CONTEXT): %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("QueryContextAttributes");
+      DEBUG_printf(("5http_win32_client: QueryContextAttributes failed(SECPKG_ATTR_REMOTE_CERT_CONTEXT): %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       return (-1);
     }
 
@@ -1558,12 +1557,12 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
     * Find out how big the header/trailer will be:
     */
 
-    scRet = QueryContextAttributes(&sspi->context, SECPKG_ATTR_STREAM_SIZES, &sspi->streamSizes);
+    scRet = QueryContextAttributes(&win32->context, SECPKG_ATTR_STREAM_SIZES, &win32->streamSizes);
 
     if (scRet != SEC_E_OK)
     {
-      http_sspi_set_error("QueryContextAttributes");
-      DEBUG_printf(("5http_sspi_client: QueryContextAttributes failed(SECPKG_ATTR_STREAM_SIZES): %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("QueryContextAttributes");
+      DEBUG_printf(("5http_win32_client: QueryContextAttributes failed(SECPKG_ATTR_STREAM_SIZES): %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       ret = -1;
     }
   }
@@ -1573,11 +1572,11 @@ http_sspi_client(http_t     *http,	/* I - Client connection */
 
 
 /*
- * 'http_sspi_create_credential()' - Create an SSPI certificate context.
+ * 'http_win32_create_credential()' - Create an SChannel certificate context.
  */
 
 static PCCERT_CONTEXT			/* O - Certificate context */
-http_sspi_create_credential(
+http_win32_create_credential(
     http_credential_t *cred)		/* I - Credential */
 {
   if (cred)
@@ -1588,16 +1587,16 @@ http_sspi_create_credential(
 
 
 /*
- * 'http_sspi_find_credentials()' - Retrieve a TLS certificate from the system store.
+ * 'http_win32_find_credentials()' - Retrieve a TLS certificate from the system store.
  */
 
 static BOOL				/* O - 1 on success, 0 on failure */
-http_sspi_find_credentials(
+http_win32_find_credentials(
     http_t       *http,			/* I - HTTP connection */
     const LPWSTR container,		/* I - Cert container name */
     const char   *common_name)		/* I - Common name of certificate */
 {
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
   HCERTSTORE	store = NULL;		/* Certificate store */
   PCCERT_CONTEXT storedContext = NULL;	/* Context created from the store */
   DWORD		dwSize = 0; 		/* 32 bit size */
@@ -1617,8 +1616,8 @@ http_sspi_find_credentials(
     {
       if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
       {
-	http_sspi_set_error("CryptAquireContext");
-        DEBUG_printf(("5http_sspi_find_credentials: CryptAcquireContext failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+	http_win32_set_error("CryptAquireContext");
+        DEBUG_printf(("5http_win32_find_credentials: CryptAcquireContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
         ok = FALSE;
         goto cleanup;
       }
@@ -1629,8 +1628,8 @@ http_sspi_find_credentials(
 
   if (!store)
   {
-    http_sspi_set_error("CertOpenSystemStore");
-    DEBUG_printf(("5http_sspi_find_credentials: CertOpenSystemStore failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+    http_win32_set_error("CertOpenSystemStore");
+    DEBUG_printf(("5http_win32_find_credentials: CertOpenSystemStore failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
     ok = FALSE;
     goto cleanup;
   }
@@ -1641,8 +1640,8 @@ http_sspi_find_credentials(
 
     if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, NULL, &dwSize, NULL))
     {
-      http_sspi_set_error("CertStrToName");
-      DEBUG_printf(("5http_sspi_find_credentials: CertStrToName failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+      http_win32_set_error("CertStrToName");
+      DEBUG_printf(("5http_win32_find_credentials: CertStrToName failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
       ok = FALSE;
       goto cleanup;
     }
@@ -1652,15 +1651,15 @@ http_sspi_find_credentials(
     if (!p)
     {
       _cupsSetHTTPError(HTTP_STATUS_ERROR);
-      DEBUG_printf(("5http_sspi_find_credentials: malloc failed for %d bytes.", dwSize));
+      DEBUG_printf(("5http_win32_find_credentials: malloc failed for %d bytes.", dwSize));
       ok = FALSE;
       goto cleanup;
     }
 
     if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, p, &dwSize, NULL))
     {
-      http_sspi_set_error("CertStrToName");
-      DEBUG_printf(("5http_sspi_find_credentials: CertStrToName failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+      http_win32_set_error("CertStrToName");
+      DEBUG_printf(("5http_win32_find_credentials: CertStrToName failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
       ok = FALSE;
       goto cleanup;
     }
@@ -1672,8 +1671,8 @@ http_sspi_find_credentials(
 
     if (!storedContext)
     {
-      http_sspi_set_error("CertFindCertificateInStore");
-      DEBUG_printf(("5http_sspi_find_credentials: Unable to find credentials for \"%s\".", common_name));
+      http_win32_set_error("CertFindCertificateInStore");
+      DEBUG_printf(("5http_win32_find_credentials: Unable to find credentials for \"%s\".", common_name));
       ok = FALSE;
       goto cleanup;
     }
@@ -1737,14 +1736,14 @@ http_sspi_find_credentials(
   /* TODO: Support _HTTP_TLS_ALLOW_RC4, _HTTP_TLS_ALLOW_DH, and _HTTP_TLS_DENY_CBC options; right now we'll rely on Windows registry to enable/disable RC4/DH/CBC... */
 
  /*
-  * Create an SSPI credential.
+  * Create an SChannel credential.
   */
 
-  Status = AcquireCredentialsHandle(NULL, UNISP_NAME, http->mode == _HTTP_MODE_SERVER ? SECPKG_CRED_INBOUND : SECPKG_CRED_OUTBOUND, NULL, &SchannelCred, NULL, NULL, &sspi->creds, &tsExpiry);
+  Status = AcquireCredentialsHandle(NULL, UNISP_NAME, http->mode == _HTTP_MODE_SERVER ? SECPKG_CRED_INBOUND : SECPKG_CRED_OUTBOUND, NULL, &SchannelCred, NULL, NULL, &win32->creds, &tsExpiry);
   if (Status != SEC_E_OK)
   {
-    http_sspi_set_error("AcquireCredentialsHandle");
-    DEBUG_printf(("5http_sspi_find_credentials: AcquireCredentialsHandle failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), Status)));
+    http_win32_set_error("AcquireCredentialsHandle");
+    DEBUG_printf(("5http_win32_find_credentials: AcquireCredentialsHandle failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), Status)));
     ok = FALSE;
     goto cleanup;
   }
@@ -1772,44 +1771,44 @@ cleanup:
 
 
 /*
- * 'http_sspi_free()' - Close a connection and free resources.
+ * 'http_win32_free()' - Close a connection and free resources.
  */
 
 static void
-http_sspi_free(_http_sspi_t *sspi)	/* I - SSPI data */
+http_win32_free(_http_win32_t *win32)	/* I - SChannel data */
 {
-  if (!sspi)
+  if (!win32)
     return;
 
-  if (sspi->contextInitialized)
-    DeleteSecurityContext(&sspi->context);
+  if (win32->contextInitialized)
+    DeleteSecurityContext(&win32->context);
 
-  if (sspi->decryptBuffer)
-    free(sspi->decryptBuffer);
+  if (win32->decryptBuffer)
+    free(win32->decryptBuffer);
 
-  if (sspi->readBuffer)
-    free(sspi->readBuffer);
+  if (win32->readBuffer)
+    free(win32->readBuffer);
 
-  if (sspi->writeBuffer)
-    free(sspi->writeBuffer);
+  if (win32->writeBuffer)
+    free(win32->writeBuffer);
 
-  if (sspi->localCert)
-    CertFreeCertificateContext(sspi->localCert);
+  if (win32->localCert)
+    CertFreeCertificateContext(win32->localCert);
 
-  if (sspi->remoteCert)
-    CertFreeCertificateContext(sspi->remoteCert);
+  if (win32->remoteCert)
+    CertFreeCertificateContext(win32->remoteCert);
 
-  free(sspi);
+  free(win32);
 }
 
 
 /*
- * 'http_sspi_make_credentials()' - Create a TLS certificate in the system store.
+ * 'http_win32_make_credentials()' - Create a TLS certificate in the system store.
  */
 
 static BOOL				/* O - 1 on success, 0 on failure */
-http_sspi_make_credentials(
-    _http_sspi_t *sspi,			/* I - SSPI data */
+http_win32_make_credentials(
+    _http_win32_t *win32,			/* I - SChannel data */
     const LPWSTR container,		/* I - Cert container name */
     const char   *common_name,		/* I - Common name of certificate */
     _http_mode_t mode,			/* I - Client or server? */
@@ -1834,7 +1833,7 @@ http_sspi_make_credentials(
   BOOL		ok = TRUE;		/* Return value */
 
 
-  DEBUG_printf(("4http_sspi_make_credentials(sspi=%p, container=%p, common_name=\"%s\", mode=%d, years=%d)", sspi, container, common_name, mode, years));
+  DEBUG_printf(("4http_win32_make_credentials(win32=%p, container=%p, common_name=\"%s\", mode=%d, years=%d)", win32, container, common_name, mode, years));
 
   if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET /* | CRYPT_MACHINE_KEYSET*/))
   {
@@ -1842,9 +1841,9 @@ http_sspi_make_credentials(
     {
       if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
       {
-	http_sspi_set_error("CryptAquireContext");
-        DEBUG_printf(("5http_sspi_make_credentials: CryptAcquireContext failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//        fprintf(stderr, "5http_sspi_make_credentials: CryptAcquireContext failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+	http_win32_set_error("CryptAquireContext");
+        DEBUG_printf(("5http_win32_make_credentials: CryptAcquireContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//        fprintf(stderr, "5http_win32_make_credentials: CryptAcquireContext failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
         ok = FALSE;
         goto cleanup;
       }
@@ -1855,9 +1854,9 @@ http_sspi_make_credentials(
 
   if (!store)
   {
-    http_sspi_set_error("CertOpenSystemStore");
-    DEBUG_printf(("5http_sspi_make_credentials: CertOpenSystemStore failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//    fprintf(stderr, "5http_sspi_make_credentials: CertOpenSystemStore failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+    http_win32_set_error("CertOpenSystemStore");
+    DEBUG_printf(("5http_win32_make_credentials: CertOpenSystemStore failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//    fprintf(stderr, "5http_win32_make_credentials: CertOpenSystemStore failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
     ok = FALSE;
     goto cleanup;
   }
@@ -1866,9 +1865,9 @@ http_sspi_make_credentials(
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, NULL, &dwSize, NULL))
   {
-    http_sspi_set_error("CertStrToName");
-    DEBUG_printf(("5http_sspi_make_credentials: CertStrToName failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//    fprintf(stderr, "5http_sspi_make_credentials: CertStrToName failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+    http_win32_set_error("CertStrToName");
+    DEBUG_printf(("5http_win32_make_credentials: CertStrToName failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//    fprintf(stderr, "5http_win32_make_credentials: CertStrToName failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
     ok = FALSE;
     goto cleanup;
   }
@@ -1878,17 +1877,17 @@ http_sspi_make_credentials(
   if (!p)
   {
     _cupsSetHTTPError(HTTP_STATUS_ERROR);
-    DEBUG_printf(("5http_sspi_make_credentials: malloc failed for %d bytes", dwSize));
-//    fprintf(stderr, "5http_sspi_make_credentials: malloc failed for %d bytes\n", dwSize);
+    DEBUG_printf(("5http_win32_make_credentials: malloc failed for %d bytes", dwSize));
+//    fprintf(stderr, "5http_win32_make_credentials: malloc failed for %d bytes\n", dwSize);
     ok = FALSE;
     goto cleanup;
   }
 
   if (!CertStrToNameA(X509_ASN_ENCODING, common_name, CERT_OID_NAME_STR, NULL, p, &dwSize, NULL))
   {
-    http_sspi_set_error("CertStrToName");
-    DEBUG_printf(("5http_sspi_make_credentials: CertStrToName failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//    fprintf(stderr, "5http_sspi_make_credentials: CertStrToName failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+    http_win32_set_error("CertStrToName");
+    DEBUG_printf(("5http_win32_make_credentials: CertStrToName failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//    fprintf(stderr, "5http_win32_make_credentials: CertStrToName failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
     ok = FALSE;
     goto cleanup;
   }
@@ -1902,9 +1901,9 @@ http_sspi_make_credentials(
 
   if (!CryptGenKey(hProv, AT_KEYEXCHANGE, CRYPT_EXPORTABLE | RSA1024BIT_KEY, &hKey))
   {
-    http_sspi_set_error("CryptGenKey");
-    DEBUG_printf(("5http_sspi_make_credentials: CryptGenKey failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//    fprintf(stderr, "5http_sspi_make_credentials: CryptGenKey failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+    http_win32_set_error("CryptGenKey");
+    DEBUG_printf(("5http_win32_make_credentials: CryptGenKey failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//    fprintf(stderr, "5http_win32_make_credentials: CryptGenKey failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
     ok = FALSE;
     goto cleanup;
   }
@@ -1927,9 +1926,9 @@ http_sspi_make_credentials(
 
   if (!createdContext)
   {
-    http_sspi_set_error("CertCreateSelfSignCertificate");
-    DEBUG_printf(("5http_sspi_make_credentials: CertCreateSelfSignCertificate failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
-//    fprintf(stderr, "5http_sspi_make_credentials: CertCreateSelfSignCertificate failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError()));
+    http_win32_set_error("CertCreateSelfSignCertificate");
+    DEBUG_printf(("5http_win32_make_credentials: CertCreateSelfSignCertificate failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
+//    fprintf(stderr, "5http_win32_make_credentials: CertCreateSelfSignCertificate failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError()));
     ok = FALSE;
     goto cleanup;
   }
@@ -1941,8 +1940,8 @@ http_sspi_make_credentials(
 
   if (!CertAddCertificateContextToStore(store, createdContext, CERT_STORE_ADD_REPLACE_EXISTING, &storedContext))
   {
-    http_sspi_set_error("CertAddCertificateContextToStore");
-    DEBUG_printf(("5http_sspi_make_credentials: CertAddCertificateContextToStore failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+    http_win32_set_error("CertAddCertificateContextToStore");
+    DEBUG_printf(("5http_win32_make_credentials: CertAddCertificateContextToStore failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
     ok = FALSE;
     goto cleanup;
   }
@@ -1956,8 +1955,8 @@ http_sspi_make_credentials(
 
   if (!CertSetCertificateContextProperty(storedContext, CERT_KEY_PROV_INFO_PROP_ID, 0, &ckp))
   {
-    http_sspi_set_error("CertSetCertificateContextProperty");
-    DEBUG_printf(("5http_sspi_make_credentials: CertSetCertificateContextProperty failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), GetLastError())));
+    http_win32_set_error("CertSetCertificateContextProperty");
+    DEBUG_printf(("5http_win32_make_credentials: CertSetCertificateContextProperty failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
     ok = FALSE;
     goto cleanup;
   }
@@ -1973,15 +1972,15 @@ http_sspi_make_credentials(
   SchannelCred.paCred    = &storedContext;
 
  /*
-  * Create an SSPI credential.
+  * Create an SChannel credential.
   */
 
-  Status = AcquireCredentialsHandle(NULL, UNISP_NAME, mode == _HTTP_MODE_SERVER ? SECPKG_CRED_INBOUND : SECPKG_CRED_OUTBOUND, NULL, &SchannelCred, NULL, NULL, &sspi->creds, &tsExpiry);
+  Status = AcquireCredentialsHandle(NULL, UNISP_NAME, mode == _HTTP_MODE_SERVER ? SECPKG_CRED_INBOUND : SECPKG_CRED_OUTBOUND, NULL, &SchannelCred, NULL, NULL, &win32->creds, &tsExpiry);
   if (Status != SEC_E_OK)
   {
-    http_sspi_set_error("AcquireCredentialsHandle");
-    DEBUG_printf(("5http_sspi_make_credentials: AcquireCredentialsHandle failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), Status)));
-//    fprintf(stderr, "5http_sspi_make_credentials: AcquireCredentialsHandle failed: %s\n", http_sspi_strerror(sspi->error, sizeof(sspi->error), Status));
+    http_win32_set_error("AcquireCredentialsHandle");
+    DEBUG_printf(("5http_win32_make_credentials: AcquireCredentialsHandle failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), Status)));
+//    fprintf(stderr, "5http_win32_make_credentials: AcquireCredentialsHandle failed: %s\n", http_win32_strerror(win32->error, sizeof(win32->error), Status));
     ok = FALSE;
     goto cleanup;
   }
@@ -2015,19 +2014,19 @@ cleanup:
 
 
 /*
- * 'http_sspi_server()' - Negotiate a TLS connection as a server.
+ * 'http_win32_server()' - Negotiate a TLS connection as a server.
  */
 
 static int				/* O - 0 on success, -1 on failure */
-http_sspi_server(http_t     *http,	/* I - HTTP connection */
+http_win32_server(http_t     *http,	/* I - HTTP connection */
                  const char *hostname)	/* I - Hostname of server */
 {
-  _http_sspi_t	*sspi = http->tls;	/* SSPI data */
+  _http_win32_t	*win32 = http->tls;	/* SChannel data */
   char		common_name[512];	/* Common name for cert */
-  DWORD		dwSSPIFlags;		/* SSL connection attributes we want */
-  DWORD		dwSSPIOutFlags;		/* SSL connection attributes we got */
+  DWORD		dwSChannelFlags;		/* SSL connection attributes we want */
+  DWORD		dwSChannelOutFlags;		/* SSL connection attributes we got */
   TimeStamp	tsExpiry;		/* Time stamp */
-  SECURITY_STATUS scRet;		/* SSPI Status */
+  SECURITY_STATUS scRet;		/* SChannel Status */
   SecBufferDesc	inBuffer;		/* Array of SecBuffer structs */
   SecBuffer	inBuffers[2];		/* Security package buffer */
   SecBufferDesc	outBuffer;		/* Array of SecBuffer structs */
@@ -2037,16 +2036,16 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
   int		ret = 0;		/* Return value */
 
 
-  DEBUG_printf(("4http_sspi_server(http=%p, hostname=\"%s\")", http, hostname));
+  DEBUG_printf(("4http_win32_server(http=%p, hostname=\"%s\")", http, hostname));
 
-  dwSSPIFlags = ASC_REQ_SEQUENCE_DETECT  |
+  dwSChannelFlags = ASC_REQ_SEQUENCE_DETECT  |
                 ASC_REQ_REPLAY_DETECT    |
                 ASC_REQ_CONFIDENTIALITY  |
                 ASC_REQ_EXTENDED_ERROR   |
                 ASC_REQ_ALLOCATE_MEMORY  |
                 ASC_REQ_STREAM;
 
-  sspi->decryptBufferUsed = 0;
+  win32->decryptBufferUsed = 0;
 
  /*
   * Lookup the server certificate...
@@ -2054,10 +2053,10 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
 
   snprintf(common_name, sizeof(common_name), "CN=%s", hostname);
 
-  if (!http_sspi_find_credentials(http, L"ServerContainer", common_name))
-    if (!http_sspi_make_credentials(http->tls, L"ServerContainer", common_name, _HTTP_MODE_SERVER, 10))
+  if (!http_win32_find_credentials(http, L"ServerContainer", common_name))
+    if (!http_win32_make_credentials(http->tls, L"ServerContainer", common_name, _HTTP_MODE_SERVER, 10))
     {
-      DEBUG_puts("5http_sspi_server: Unable to get server credentials.");
+      DEBUG_puts("5http_win32_server: Unable to get server credentials.");
       return (-1);
     }
 
@@ -2075,34 +2074,34 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
          scRet == SEC_E_INCOMPLETE_MESSAGE ||
          scRet == SEC_I_INCOMPLETE_CREDENTIALS)
   {
-    if (sspi->decryptBufferUsed == 0 || scRet == SEC_E_INCOMPLETE_MESSAGE)
+    if (win32->decryptBufferUsed == 0 || scRet == SEC_E_INCOMPLETE_MESSAGE)
     {
-      if (sspi->decryptBufferLength <= sspi->decryptBufferUsed)
+      if (win32->decryptBufferLength <= win32->decryptBufferUsed)
       {
 	BYTE *temp;			/* New buffer */
 
-	if (sspi->decryptBufferLength >= 262144)
+	if (win32->decryptBufferLength >= 262144)
 	{
 	  WSASetLastError(E_OUTOFMEMORY);
-	  DEBUG_puts("5http_sspi_server: Decryption buffer too large (>256k)");
+	  DEBUG_puts("5http_win32_server: Decryption buffer too large (>256k)");
 	  return (-1);
 	}
 
-	if ((temp = realloc(sspi->decryptBuffer, sspi->decryptBufferLength + 4096)) == NULL)
+	if ((temp = realloc(win32->decryptBuffer, win32->decryptBufferLength + 4096)) == NULL)
 	{
 	  _cupsSetHTTPError(HTTP_STATUS_ERROR);
-	  DEBUG_printf(("5http_sspi_server: Unable to allocate %d byte buffer.", sspi->decryptBufferLength + 4096));
+	  DEBUG_printf(("5http_win32_server: Unable to allocate %d byte buffer.", win32->decryptBufferLength + 4096));
 	  WSASetLastError(E_OUTOFMEMORY);
 	  return (-1);
 	}
 
-	sspi->decryptBufferLength += 4096;
-	sspi->decryptBuffer       = temp;
+	win32->decryptBufferLength += 4096;
+	win32->decryptBuffer       = temp;
       }
 
       for (;;)
       {
-        num = recv(http->fd, sspi->decryptBuffer + sspi->decryptBufferUsed, (int)(sspi->decryptBufferLength - sspi->decryptBufferUsed), 0);
+        num = recv(http->fd, win32->decryptBuffer + win32->decryptBufferUsed, (int)(win32->decryptBufferLength - win32->decryptBufferUsed), 0);
 
         if (num == -1 && WSAGetLastError() == WSAEWOULDBLOCK)
           Sleep(1);
@@ -2112,26 +2111,26 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
 
       if (num < 0)
       {
-        DEBUG_printf(("5http_sspi_server: recv failed: %d", WSAGetLastError()));
+        DEBUG_printf(("5http_win32_server: recv failed: %d", WSAGetLastError()));
         return (-1);
       }
       else if (num == 0)
       {
-        DEBUG_puts("5http_sspi_server: client disconnected");
+        DEBUG_puts("5http_win32_server: client disconnected");
         return (-1);
       }
 
-      DEBUG_printf(("5http_sspi_server: received %d (handshake) bytes from client.", num));
-      sspi->decryptBufferUsed += num;
+      DEBUG_printf(("5http_win32_server: received %d (handshake) bytes from client.", num));
+      win32->decryptBufferUsed += num;
     }
 
    /*
-    * InBuffers[1] is for getting extra data that SSPI/SCHANNEL doesn't process
+    * InBuffers[1] is for getting extra data that SChannel/SCHANNEL doesn't process
     * on this run around the loop.
     */
 
-    inBuffers[0].pvBuffer   = sspi->decryptBuffer;
-    inBuffers[0].cbBuffer   = (unsigned long)sspi->decryptBufferUsed;
+    inBuffers[0].pvBuffer   = win32->decryptBuffer;
+    inBuffers[0].cbBuffer   = (unsigned long)win32->decryptBufferUsed;
     inBuffers[0].BufferType = SECBUFFER_TOKEN;
 
     inBuffers[1].pvBuffer   = NULL;
@@ -2151,13 +2150,13 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
     outBuffers[0].BufferType = SECBUFFER_TOKEN;
     outBuffers[0].cbBuffer   = 0;
 
-    scRet = AcceptSecurityContext(&sspi->creds, (fInitContext?NULL:&sspi->context), &inBuffer, dwSSPIFlags, SECURITY_NATIVE_DREP, (fInitContext?&sspi->context:NULL), &outBuffer, &dwSSPIOutFlags, &tsExpiry);
+    scRet = AcceptSecurityContext(&win32->creds, (fInitContext?NULL:&win32->context), &inBuffer, dwSChannelFlags, SECURITY_NATIVE_DREP, (fInitContext?&win32->context:NULL), &outBuffer, &dwSChannelOutFlags, &tsExpiry);
 
     fInitContext = FALSE;
 
     if (scRet == SEC_E_OK              ||
         scRet == SEC_I_CONTINUE_NEEDED ||
-        (FAILED(scRet) && ((dwSSPIOutFlags & ISC_RET_EXTENDED_ERROR) != 0)))
+        (FAILED(scRet) && ((dwSChannelOutFlags & ISC_RET_EXTENDED_ERROR) != 0)))
     {
       if (outBuffers[0].cbBuffer && outBuffers[0].pvBuffer)
       {
@@ -2169,11 +2168,11 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
 
         if (num <= 0)
         {
-          DEBUG_printf(("5http_sspi_server: handshake send failed: %d", WSAGetLastError()));
+          DEBUG_printf(("5http_win32_server: handshake send failed: %d", WSAGetLastError()));
 	  return (-1);
         }
 
-        DEBUG_printf(("5http_sspi_server: sent %d handshake bytes to client.", outBuffers[0].cbBuffer));
+        DEBUG_printf(("5http_win32_server: sent %d handshake bytes to client.", outBuffers[0].cbBuffer));
 
         FreeContextBuffer(outBuffers[0].pvBuffer);
         outBuffers[0].pvBuffer = NULL;
@@ -2188,19 +2187,19 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
 
       if (inBuffers[1].BufferType == SECBUFFER_EXTRA)
       {
-        memcpy(sspi->decryptBuffer, (LPBYTE)(sspi->decryptBuffer + sspi->decryptBufferUsed - inBuffers[1].cbBuffer), inBuffers[1].cbBuffer);
-        sspi->decryptBufferUsed = inBuffers[1].cbBuffer;
+        memcpy(win32->decryptBuffer, (LPBYTE)(win32->decryptBuffer + win32->decryptBufferUsed - inBuffers[1].cbBuffer), inBuffers[1].cbBuffer);
+        win32->decryptBufferUsed = inBuffers[1].cbBuffer;
       }
       else
       {
-        sspi->decryptBufferUsed = 0;
+        win32->decryptBufferUsed = 0;
       }
       break;
     }
     else if (FAILED(scRet) && scRet != SEC_E_INCOMPLETE_MESSAGE)
     {
-      http_sspi_set_error("AcceptSecurityContext");
-      DEBUG_printf(("5http_sspi_server: AcceptSecurityContext failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("AcceptSecurityContext");
+      DEBUG_printf(("5http_win32_server: AcceptSecurityContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       ret = -1;
       break;
     }
@@ -2210,30 +2209,30 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
     {
       if (inBuffers[1].BufferType == SECBUFFER_EXTRA)
       {
-        memcpy(sspi->decryptBuffer, (LPBYTE)(sspi->decryptBuffer + sspi->decryptBufferUsed - inBuffers[1].cbBuffer), inBuffers[1].cbBuffer);
-        sspi->decryptBufferUsed = inBuffers[1].cbBuffer;
+        memcpy(win32->decryptBuffer, (LPBYTE)(win32->decryptBuffer + win32->decryptBufferUsed - inBuffers[1].cbBuffer), inBuffers[1].cbBuffer);
+        win32->decryptBufferUsed = inBuffers[1].cbBuffer;
       }
       else
       {
-        sspi->decryptBufferUsed = 0;
+        win32->decryptBufferUsed = 0;
       }
     }
   }
 
   if (!ret)
   {
-    sspi->contextInitialized = TRUE;
+    win32->contextInitialized = TRUE;
 
    /*
     * Find out how big the header will be:
     */
 
-    scRet = QueryContextAttributes(&sspi->context, SECPKG_ATTR_STREAM_SIZES, &sspi->streamSizes);
+    scRet = QueryContextAttributes(&win32->context, SECPKG_ATTR_STREAM_SIZES, &win32->streamSizes);
 
     if (scRet != SEC_E_OK)
     {
-      http_sspi_set_error("QueryContextAttributes");
-      DEBUG_printf(("5http_sspi_server: QueryContextAttributes failed: %s", http_sspi_strerror(sspi->error, sizeof(sspi->error), scRet)));
+      http_win32_set_error("QueryContextAttributes");
+      DEBUG_printf(("5http_win32_server: QueryContextAttributes failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), scRet)));
       ret = -1;
     }
   }
@@ -2243,11 +2242,11 @@ http_sspi_server(http_t     *http,	/* I - HTTP connection */
 
 
 //
-// 'http_sspi_set_error()' - Copy the Windows error string to the CUPS error string.
+// 'http_win32_set_error()' - Copy the Windows error string to the CUPS error string.
 //
 
 static void
-http_sspi_set_error(const char *title)	// I - Prefix/title for error
+http_win32_set_error(const char *title)	// I - Prefix/title for error
 {
   char		temp[8192];		// Error string
   size_t	templen;		// Length of prefix
@@ -2255,17 +2254,17 @@ http_sspi_set_error(const char *title)	// I - Prefix/title for error
 
   snprintf(temp, sizeof(temp), "%s (%08x): ", title, GetLastError());
   templen = strlen(temp);
-  http_sspi_strerror(temp + templen, sizeof(temp) - templen, GetLastError());
+  http_win32_strerror(temp + templen, sizeof(temp) - templen, GetLastError());
   _cupsSetError(IPP_STATUS_ERROR_CUPS_PKI, temp, 0);
 }
 
 
 /*
- * 'http_sspi_strerror()' - Return a string for the specified error code.
+ * 'http_win32_strerror()' - Return a string for the specified error code.
  */
 
 static const char *			/* O - String for error */
-http_sspi_strerror(char   *buffer,	/* I - Error message buffer */
+http_win32_strerror(char   *buffer,	/* I - Error message buffer */
                    size_t bufsize,	/* I - Size of buffer */
                    DWORD  code)		/* I - Error code */
 {
@@ -2291,11 +2290,11 @@ http_sspi_strerror(char   *buffer,	/* I - Error message buffer */
 
 
 /*
- * 'http_sspi_verify()' - Verify a certificate.
+ * 'http_win32_verify()' - Verify a certificate.
  */
 
 static DWORD				/* O - Error code (0 == No error) */
-http_sspi_verify(
+http_win32_verify(
     PCCERT_CONTEXT cert,		/* I - Server certificate */
     const char     *common_name,	/* I - Common name */
     DWORD          dwCertFlags)		/* I - Verification flags */
@@ -2357,8 +2356,8 @@ http_sspi_verify(
   {
     status = GetLastError();
 
-    http_sspi_set_error("CertGetCertificateChain");
-    DEBUG_printf(("5http_sspi_verify: CertGetCertificateChain returned: %s", http_sspi_strerror(error, sizeof(error), status)));
+    http_win32_set_error("CertGetCertificateChain");
+    DEBUG_printf(("5http_win32_verify: CertGetCertificateChain returned: %s", http_win32_strerror(error, sizeof(error), status)));
 
     LocalFree(commonNameUnicode);
     return (status);
@@ -2385,8 +2384,8 @@ http_sspi_verify(
   {
     status = GetLastError();
 
-    http_sspi_set_error("CertVerifyCertificateChainPolicy");
-    DEBUG_printf(("5http_sspi_verify: CertVerifyCertificateChainPolicy returned %s", http_sspi_strerror(error, sizeof(error), status)));
+    http_win32_set_error("CertVerifyCertificateChainPolicy");
+    DEBUG_printf(("5http_win32_verify: CertVerifyCertificateChainPolicy returned %s", http_win32_strerror(error, sizeof(error), status)));
   }
   else if (policyStatus.dwError)
     status = policyStatus.dwError;
