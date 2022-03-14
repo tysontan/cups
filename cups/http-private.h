@@ -86,7 +86,9 @@ typedef int socklen_t;
 #    include <schannel.h>
 #    define SECURITY_WIN32
 #    include <security.h>
-#    include <win32.h>
+#    define SCHANNEL_USE_BLACKLISTS
+#    include <schannel.h>
+//#    include <sspi.h>
 #  endif /* HAVE_GNUTLS */
 
 #  ifndef _WIN32
