@@ -21,7 +21,9 @@
 #ifdef HAVE_POLL
 #  include <poll.h>
 #endif /* HAVE_POLL */
-#ifndef _WIN32
+#if _WIN32
+#  pragma comment(lib, "Ws2_32.lib")
+#else
 #  include <fcntl.h>
 #endif /* _WIN32 */
 

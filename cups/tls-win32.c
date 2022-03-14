@@ -24,7 +24,6 @@
 
 #pragma comment(lib, "Crypt32.lib")
 #pragma comment(lib, "Secur32.lib")
-#pragma comment(lib, "Ws2_32.lib")
 
 
 /*
@@ -430,11 +429,11 @@ httpLoadCredentials(
     return (-1);
   }
 
-  if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET /*| CRYPT_MACHINE_KEYSET*/))
+  if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_AES, CRYPT_NEWKEYSET))
   {
     if (GetLastError() == NTE_EXISTS)
     {
-      if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
+      if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_AES, 0))
       {
         DEBUG_printf(("1httpLoadCredentials: CryptAcquireContext failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
         http_win32_set_error("CryptAquireContext");
@@ -556,11 +555,11 @@ httpSaveCredentials(
     return (-1);
   }
 
-  if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET /*| CRYPT_MACHINE_KEYSET*/))
+  if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_AES, CRYPT_NEWKEYSET))
   {
     if (GetLastError() == NTE_EXISTS)
     {
-      if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
+      if (!CryptAcquireContextW(&hProv, L"RememberedContainer", MS_DEF_PROV_W, PROV_RSA_AES, 0))
       {
         DEBUG_printf(("1httpSaveCredentials: CryptAcquireContext failed: %s", http_win32_strerror(error, sizeof(error), GetLastError())));
         http_win32_set_error("CryptAquireContext");
@@ -618,8 +617,7 @@ httpSaveCredentials(
   ZeroMemory(&ckp, sizeof(ckp));
   ckp.pwszContainerName = L"RememberedContainer";
   ckp.pwszProvName      = MS_DEF_PROV_W;
-  ckp.dwProvType        = PROV_RSA_FULL;
-  ckp.dwFlags           = 0 /*CRYPT_MACHINE_KEYSET*/;
+  ckp.dwProvType        = PROV_RSA_AES;
   ckp.dwKeySpec         = AT_KEYEXCHANGE;
 
   if (!CertSetCertificateContextProperty(storedContext, CERT_KEY_PROV_INFO_PROP_ID, 0, &ckp))
@@ -962,8 +960,7 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
       */
 
       strlcpy(hostname, http->hostname, sizeof(hostname));
-      if ((hostptr = hostname + strlen(hostname) - 1) >= hostname &&
-	  *hostptr == '.')
+      if ((hostptr = hostname + strlen(hostname) - 1) >= hostname && *hostptr == '.')
 	*hostptr = '\0';
     }
 
@@ -999,7 +996,9 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
 	hostname[0] = '\0';
       }
       else if (httpAddrLocalhost(&addr))
+      {
 	hostname[0] = '\0';
+      }
       else
       {
 	httpAddrLookup(&addr, hostname, sizeof(hostname));
@@ -1007,7 +1006,7 @@ _httpTLSStart(http_t *http)		/* I - HTTP connection */
       }
     }
 
-//    fprintf(stderr, "_httpTLSStart: Using hostname '%s'.\n", hostname);
+    DEBUG_printf(("4_httpTLSStart: Using hostname '%s'.", hostname));
 
     return (http_win32_server(http, hostname));
   }
@@ -1610,11 +1609,11 @@ http_win32_find_credentials(
   BOOL		ok = TRUE;		/* Return value */
 
 
-  if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET /*| CRYPT_MACHINE_KEYSET*/))
+  if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_AES, CRYPT_NEWKEYSET))
   {
     if (GetLastError() == NTE_EXISTS)
     {
-      if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
+      if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_AES, 0))
       {
 	http_win32_set_error("CryptAquireContext");
         DEBUG_printf(("5http_win32_find_credentials: CryptAcquireContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
@@ -1808,11 +1807,11 @@ http_win32_free(_http_win32_t *win32)	/* I - SChannel data */
 
 static BOOL				/* O - 1 on success, 0 on failure */
 http_win32_make_credentials(
-    _http_win32_t *win32,			/* I - SChannel data */
-    const LPWSTR container,		/* I - Cert container name */
-    const char   *common_name,		/* I - Common name of certificate */
-    _http_mode_t mode,			/* I - Client or server? */
-    int          years)			/* I - Years until expiration */
+    _http_win32_t *win32,		/* I - SChannel data */
+    const LPWSTR  container,		/* I - Cert container name */
+    const char    *common_name,		/* I - Common name of certificate */
+    _http_mode_t  mode,			/* I - Client or server? */
+    int           years)		/* I - Years until expiration */
 {
   HCERTSTORE	store = NULL;		/* Certificate store */
   PCCERT_CONTEXT storedContext = NULL;	/* Context created from the store */
@@ -1822,7 +1821,7 @@ http_win32_make_credentials(
   HCRYPTPROV	hProv = (HCRYPTPROV)NULL;
 					/* Handle to a CSP */
   CERT_NAME_BLOB sib;			/* Arbitrary array of bytes */
-  SCHANNEL_CRED	SchannelCred;		/* Schannel credential data */
+  SCH_CREDENTIALS SchannelCred;		/* SChannel credential data */
   TimeStamp	tsExpiry;		/* Time stamp */
   SECURITY_STATUS Status;		/* Status */
   HCRYPTKEY	hKey = (HCRYPTKEY)NULL;	/* Handle to crypto key */
@@ -1835,11 +1834,11 @@ http_win32_make_credentials(
 
   DEBUG_printf(("4http_win32_make_credentials(win32=%p, container=%p, common_name=\"%s\", mode=%d, years=%d)", win32, container, common_name, mode, years));
 
-  if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, CRYPT_NEWKEYSET /* | CRYPT_MACHINE_KEYSET*/))
+  if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_AES, CRYPT_NEWKEYSET))
   {
     if (GetLastError() == NTE_EXISTS)
     {
-      if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_FULL, 0 /*CRYPT_MACHINE_KEYSET*/))
+      if (!CryptAcquireContextW(&hProv, (LPWSTR)container, MS_DEF_PROV_W, PROV_RSA_AES, 0))
       {
 	http_win32_set_error("CryptAquireContext");
         DEBUG_printf(("5http_win32_make_credentials: CryptAcquireContext failed: %s", http_win32_strerror(win32->error, sizeof(win32->error), GetLastError())));
@@ -1911,7 +1910,7 @@ http_win32_make_credentials(
   ZeroMemory(&kpi, sizeof(kpi));
   kpi.pwszContainerName = (LPWSTR)container;
   kpi.pwszProvName      = MS_DEF_PROV_W;
-  kpi.dwProvType        = PROV_RSA_FULL;
+  kpi.dwProvType        = PROV_RSA_AES;
   kpi.dwFlags           = CERT_SET_KEY_CONTEXT_PROP_ID;
   kpi.dwKeySpec         = AT_KEYEXCHANGE;
 
@@ -1949,8 +1948,7 @@ http_win32_make_credentials(
   ZeroMemory(&ckp, sizeof(ckp));
   ckp.pwszContainerName = (LPWSTR) container;
   ckp.pwszProvName      = MS_DEF_PROV_W;
-  ckp.dwProvType        = PROV_RSA_FULL;
-  ckp.dwFlags           = 0 /*CRYPT_MACHINE_KEYSET*/;
+  ckp.dwProvType        = PROV_RSA_AES;
   ckp.dwKeySpec         = AT_KEYEXCHANGE;
 
   if (!CertSetCertificateContextProperty(storedContext, CERT_KEY_PROV_INFO_PROP_ID, 0, &ckp))
@@ -2023,8 +2021,8 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
 {
   _http_win32_t	*win32 = http->tls;	/* SChannel data */
   char		common_name[512];	/* Common name for cert */
-  DWORD		dwSChannelFlags;		/* SSL connection attributes we want */
-  DWORD		dwSChannelOutFlags;		/* SSL connection attributes we got */
+  DWORD		dwSChannelFlags;	/* SSL connection attributes we want */
+  DWORD		dwSChannelOutFlags;	/* SSL connection attributes we got */
   TimeStamp	tsExpiry;		/* Time stamp */
   SECURITY_STATUS scRet;		/* SChannel Status */
   SecBufferDesc	inBuffer;		/* Array of SecBuffer structs */
@@ -2038,12 +2036,7 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
 
   DEBUG_printf(("4http_win32_server(http=%p, hostname=\"%s\")", http, hostname));
 
-  dwSChannelFlags = ASC_REQ_SEQUENCE_DETECT  |
-                ASC_REQ_REPLAY_DETECT    |
-                ASC_REQ_CONFIDENTIALITY  |
-                ASC_REQ_EXTENDED_ERROR   |
-                ASC_REQ_ALLOCATE_MEMORY  |
-                ASC_REQ_STREAM;
+  dwSChannelFlags = ASC_REQ_SEQUENCE_DETECT | ASC_REQ_REPLAY_DETECT | ASC_REQ_CONFIDENTIALITY | ASC_REQ_EXTENDED_ERROR | ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_STREAM;
 
   win32->decryptBufferUsed = 0;
 
@@ -2054,11 +2047,13 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
   snprintf(common_name, sizeof(common_name), "CN=%s", hostname);
 
   if (!http_win32_find_credentials(http, L"ServerContainer", common_name))
+  {
     if (!http_win32_make_credentials(http->tls, L"ServerContainer", common_name, _HTTP_MODE_SERVER, 10))
     {
       DEBUG_puts("5http_win32_server: Unable to get server credentials.");
       return (-1);
     }
+  }
 
  /*
   * Set OutBuffer for AcceptSecurityContext call
@@ -2070,9 +2065,7 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
 
   scRet = SEC_I_CONTINUE_NEEDED;
 
-  while (scRet == SEC_I_CONTINUE_NEEDED    ||
-         scRet == SEC_E_INCOMPLETE_MESSAGE ||
-         scRet == SEC_I_INCOMPLETE_CREDENTIALS)
+  while (scRet == SEC_I_CONTINUE_NEEDED || scRet == SEC_E_INCOMPLETE_MESSAGE || scRet == SEC_I_INCOMPLETE_CREDENTIALS)
   {
     if (win32->decryptBufferUsed == 0 || scRet == SEC_E_INCOMPLETE_MESSAGE)
     {
@@ -2150,13 +2143,11 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
     outBuffers[0].BufferType = SECBUFFER_TOKEN;
     outBuffers[0].cbBuffer   = 0;
 
-    scRet = AcceptSecurityContext(&win32->creds, (fInitContext?NULL:&win32->context), &inBuffer, dwSChannelFlags, SECURITY_NATIVE_DREP, (fInitContext?&win32->context:NULL), &outBuffer, &dwSChannelOutFlags, &tsExpiry);
+    scRet = AcceptSecurityContext(&win32->creds, fInitContext ? NULL : &win32->context, &inBuffer, dwSChannelFlags, SECURITY_NATIVE_DREP, fInitContext ? &win32->context : NULL, &outBuffer, &dwSChannelOutFlags, &tsExpiry);
 
     fInitContext = FALSE;
 
-    if (scRet == SEC_E_OK              ||
-        scRet == SEC_I_CONTINUE_NEEDED ||
-        (FAILED(scRet) && ((dwSChannelOutFlags & ISC_RET_EXTENDED_ERROR) != 0)))
+    if (scRet == SEC_E_OK || scRet == SEC_I_CONTINUE_NEEDED || (FAILED(scRet) && ((dwSChannelOutFlags & ISC_RET_EXTENDED_ERROR) != 0)))
     {
       if (outBuffers[0].cbBuffer && outBuffers[0].pvBuffer)
       {
@@ -2204,8 +2195,7 @@ http_win32_server(http_t     *http,	/* I - HTTP connection */
       break;
     }
 
-    if (scRet != SEC_E_INCOMPLETE_MESSAGE &&
-        scRet != SEC_I_INCOMPLETE_CREDENTIALS)
+    if (scRet != SEC_E_INCOMPLETE_MESSAGE && scRet != SEC_I_INCOMPLETE_CREDENTIALS)
     {
       if (inBuffers[1].BufferType == SECBUFFER_EXTRA)
       {
